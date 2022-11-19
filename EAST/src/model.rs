@@ -1,11 +1,13 @@
-use std::borrow::Borrow;
+use std::{borrow::Borrow, f64::consts::PI};
 
 use tch::{
-    nn::{conv2d, linear, seq, ConvConfig, Module, Sequential},
+    nn::{
+        conv2d, linear, seq, BatchNormConfig, Conv2D, ConvConfig, LinearConfig, Module, Sequential,
+    },
     Tensor,
 };
 
-use crate::utils::{batch_norm2d, AdaptiveAvgPool2d, Dropout, MaxPool2d, ReLU};
+use crate::utils::{batch_norm2d, AdaptiveAvgPool2d, BatchNorm, Dropout, MaxPool2d, ReLU, Sigmoid};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Config {
@@ -75,7 +77,11 @@ impl VGG {
 
         let avgpool = AdaptiveAvgPool2d([7, 7]);
 
-        let linear_config = Default::default();
+        let linear_config = LinearConfig {
+            // ws_init: tch::nn::Init::Uniform { lo: (), up: () },
+            bs_init: Some(tch::nn::Init::Const(0.0)),
+            ..Default::default()
+        };
 
         classifer = classifer.add(linear(p.borrow(), 512 * 7 * 7, 4096, linear_config));
 
@@ -104,9 +110,250 @@ impl Module for VGG {
         let mut x = self.features.forward(xs);
 
         x = self.avgpool.forward(&x);
-        x = x.view_(&[x.size1().unwrap(), -1]);
+        x = x.view_(&[x.size1().expect("failed to get size of tensor"), -1]);
         x = self.classifier.forward(&x);
 
         x
     }
+}
+
+#[derive(Debug)]
+struct Merge {
+    conv1: Conv2D,
+    bn1: BatchNorm,
+    relu1: ReLU,
+    conv2: Conv2D,
+    bn2: BatchNorm,
+    relu2: ReLU,
+    conv3: Conv2D,
+    bn3: BatchNorm,
+    relu3: ReLU,
+    conv4: Conv2D,
+    bn4: BatchNorm,
+    relu4: ReLU,
+    conv5: Conv2D,
+    bn5: BatchNorm,
+    relu5: ReLU,
+    conv6: Conv2D,
+    bn6: BatchNorm,
+    relu6: ReLU,
+    conv7: Conv2D,
+    bn7: BatchNorm,
+    relu7: ReLU,
+}
+
+impl Merge {
+    pub fn new<'p, P>(p: P) -> Merge
+    where
+        P: Borrow<tch::nn::Path<'p>>,
+    {
+        let conv_pad_config = ConvConfig {
+            padding: 1,
+            bs_init: tch::nn::Init::Const(0.0),
+            ..Default::default()
+        };
+
+        let conv_config = ConvConfig {
+            bs_init: tch::nn::Init::Const(0.0),
+            ..Default::default()
+        };
+
+        let batch_config = BatchNormConfig {
+            ws_init: tch::nn::Init::Const(1.0),
+            bs_init: tch::nn::Init::Const(0.0),
+            ..Default::default()
+        };
+
+        let conv1 = conv2d(p.borrow(), 1024, 128, 1, conv_config);
+        let bn1 = batch_norm2d(p.borrow(), 128, batch_config);
+        let relu1 = ReLU {};
+
+        let conv2 = conv2d(p.borrow(), 128, 128, 3, conv_pad_config);
+        let bn2 = batch_norm2d(p.borrow(), 128, batch_config);
+        let relu2 = ReLU {};
+
+        let conv3 = conv2d(p.borrow(), 384, 64, 1, conv_config);
+        let bn3 = batch_norm2d(p.borrow(), 64, batch_config);
+        let relu3 = ReLU {};
+
+        let conv4 = conv2d(p.borrow(), 64, 64, 3, conv_pad_config);
+        let bn4 = batch_norm2d(p.borrow(), 64, batch_config);
+        let relu4 = ReLU {};
+
+        let conv5 = conv2d(p.borrow(), 192, 32, 1, conv_config);
+        let bn5 = batch_norm2d(p.borrow(), 32, batch_config);
+        let relu5 = ReLU {};
+
+        let conv6 = conv2d(p.borrow(), 32, 32, 3, conv_pad_config);
+        let bn6 = batch_norm2d(p.borrow(), 32, batch_config);
+        let relu6 = ReLU {};
+
+        let conv7 = conv2d(p.borrow(), 32, 32, 3, conv_pad_config);
+        let bn7 = batch_norm2d(p.borrow(), 32, batch_config);
+        let relu7 = ReLU {};
+
+        Merge {
+            conv1,
+            bn1,
+            relu1,
+            conv2,
+            bn2,
+            relu2,
+            conv3,
+            bn3,
+            relu3,
+            conv4,
+            bn4,
+            relu4,
+            conv5,
+            bn5,
+            relu5,
+            conv6,
+            bn6,
+            relu6,
+            conv7,
+            bn7,
+            relu7,
+        }
+    }
+}
+
+impl Module for Merge {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        let mut y = Tensor::upsample_bilinear2d(&xs.get(3), &[], true, Some(2.0), Some(2.0));
+
+        y = Tensor::cat(&[y, xs.get(2)], 1);
+
+        y = self
+            .relu1
+            .forward(&self.bn1.forward(&self.conv1.forward(&y)));
+        y = self
+            .relu2
+            .forward(&self.bn2.forward(&self.conv2.forward(&y)));
+
+        y = Tensor::upsample_bilinear2d(&y, &[], true, Some(2.0), Some(2.0));
+
+        y = Tensor::cat(&[y, xs.get(1)], 1);
+
+        y = self
+            .relu3
+            .forward(&self.bn3.forward(&self.conv3.forward(&y)));
+        y = self
+            .relu4
+            .forward(&self.bn4.forward(&self.conv4.forward(&y)));
+
+        y = Tensor::upsample_bilinear2d(&y, &[], true, Some(2.0), Some(2.0));
+
+        y = Tensor::cat(&[y, xs.get(0)], 1);
+
+        y = self
+            .relu5
+            .forward(&self.bn5.forward(&self.conv5.forward(&y)));
+        y = self
+            .relu6
+            .forward(&self.bn6.forward(&self.conv6.forward(&y)));
+        y = self
+            .relu7
+            .forward(&self.bn7.forward(&self.conv7.forward(&y)));
+
+        y
+    }
+}
+
+#[derive(Debug)]
+struct Output {
+    scope: i64,
+    conv1: Conv2D,
+    sigmoid1: Sigmoid,
+    conv2: Conv2D,
+    sigmoid2: Sigmoid,
+    conv3: Conv2D,
+    sigmoid3: Sigmoid,
+}
+
+impl Output {
+    pub fn new<'p, P>(p: P, scope: i64) -> Output
+    where
+        P: Borrow<tch::nn::Path<'p>>,
+    {
+        let conv_config = ConvConfig {
+            bs_init: tch::nn::Init::Const(0.0),
+            ..Default::default()
+        };
+
+        let conv1 = conv2d(p.borrow(), 32, 1, 1, conv_config);
+        let sigmoid1 = Sigmoid {};
+
+        let conv2 = conv2d(p.borrow(), 32, 1, 1, conv_config);
+        let sigmoid2 = Sigmoid {};
+
+        let conv3 = conv2d(p.borrow(), 32, 1, 1, conv_config);
+        let sigmoid3 = Sigmoid {};
+
+        Output {
+            scope,
+            conv1,
+            sigmoid1,
+            conv2,
+            sigmoid2,
+            conv3,
+            sigmoid3,
+        }
+    }
+}
+
+impl Module for Output {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        let score = self.sigmoid1.forward(&self.conv1.forward(&xs));
+        let loc = self.sigmoid2.forward(&self.conv2.forward(&xs)) * self.scope;
+        let angle = self.sigmoid3.forward(&(&self.conv3.forward(xs) - 0.5)) * PI;
+
+        let geo = Tensor::cat(&[loc, angle], 1);
+
+        Tensor::cat(&[score, geo], 1)
+    }
+}
+
+
+#[derive(Debug)]
+struct Extractor {
+    features: Sequential
+}
+
+impl Extractor {
+    pub fn new<'p, P>(p: P) -> Extractor
+    where
+        P: Borrow<tch::nn::Path<'p>>,
+    {
+
+        let vgg16_bn = VGG::new(p.borrow(),make_layers(CFG, true, p.borrow()));
+
+        Extractor {
+            features: vgg16_bn.features
+        }
+    }
+}
+
+// impl Module for Extractor {
+//     fn forward(&self, xs: &Tensor) -> Tensor {
+//         let mut x = Tensor::new();
+//         let out = vec![];
+
+
+//         for feature in self.features {
+//             x = feature.forward(&xs);
+//             if xs.size()[2] <= 32 {
+//                 out.push(x);
+//             }
+//         }
+
+//         &out[1..]
+//     }
+// }
+
+
+struct EAST {
+    extractor: Extractor,
+    merge: Merge,
+    output: Output,
 }
