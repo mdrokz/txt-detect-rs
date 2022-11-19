@@ -12,6 +12,15 @@ pub struct ReLU;
 #[derive(Debug)]
 pub struct Dropout;
 
+#[derive(Debug)]
+pub struct Sigmoid;
+
+impl Module for Sigmoid {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        xs.sigmoid()
+    }
+}
+
 impl Module for Dropout {
     fn forward(&self, xs: &Tensor) -> Tensor {
         xs.dropout(0.5, true)
