@@ -50,6 +50,13 @@ impl Loss {
 
 impl Module for Loss {
     fn forward(&self, _xs: &tch::Tensor) -> tch::Tensor {
+
+        let gt_sum = f64::from(&self.gt_score.sum(tch::Kind::Float));
+
+        if gt_sum < 1.0 {
+            return Tensor::sum(&(&self.pred_score + &self.pred_geo), tch::Kind::Float) * 0;
+        }
+
         let classify_loss = get_dice_loss(
             &self.gt_score,
             &(&self.pred_score * (1 - &self.ignored_map)),
