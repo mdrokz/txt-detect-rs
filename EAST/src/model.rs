@@ -44,11 +44,11 @@ where
         if v == M {
             layers = layers.add(MaxPool2d(&[2, 2], &[2, 2]));
         } else {
-            let conv2d = conv2d(p.borrow(), in_channels, v as i64, kernel_size, conv_config);
+            let conv2d = conv2d(p.borrow() / "conv", in_channels, v as i64, kernel_size, conv_config);
 
             if batch_norm {
                 layers = layers.add(conv2d);
-                layers = layers.add(batch_norm2d(p.borrow(), v as i64, Default::default()));
+                layers = layers.add(batch_norm2d(p.borrow() / "bn", v as i64, Default::default()));
                 layers = layers.add(ReLU {});
             } else {
                 layers = layers.add(conv2d);
@@ -83,19 +83,19 @@ impl VGG {
             ..Default::default()
         };
 
-        classifer = classifer.add(linear(p.borrow(), 512 * 7 * 7, 4096, linear_config));
+        classifer = classifer.add(linear(p.borrow() / "linear", 512 * 7 * 7, 4096, linear_config));
 
         classifer = classifer.add(ReLU {});
 
         classifer = classifer.add(Dropout {});
 
-        classifer = classifer.add(linear(p.borrow(), 4096, 4096, linear_config));
+        classifer = classifer.add(linear(p.borrow() / "linear", 4096, 4096, linear_config));
 
         classifer = classifer.add(ReLU {});
 
         classifer = classifer.add(Dropout {});
 
-        classifer = classifer.add(linear(p.borrow(), 4096, 1000, linear_config));
+        classifer = classifer.add(linear(p.borrow() / "linear", 4096, 1000, linear_config));
 
         VGG {
             features: features,
@@ -164,32 +164,32 @@ impl Merge {
             ..Default::default()
         };
 
-        let conv1 = conv2d(p.borrow(), 1024, 128, 1, conv_config);
-        let bn1 = batch_norm2d(p.borrow(), 128, batch_config);
+        let conv1 = conv2d(p.borrow() / "conv1", 1024, 128, 1, conv_config);
+        let bn1 = batch_norm2d(p.borrow() / "bn1", 128, batch_config);
         let relu1 = ReLU {};
 
-        let conv2 = conv2d(p.borrow(), 128, 128, 3, conv_pad_config);
-        let bn2 = batch_norm2d(p.borrow(), 128, batch_config);
+        let conv2 = conv2d(p.borrow() / "conv2", 128, 128, 3, conv_pad_config);
+        let bn2 = batch_norm2d(p.borrow() / "bn2", 128, batch_config);
         let relu2 = ReLU {};
 
-        let conv3 = conv2d(p.borrow(), 384, 64, 1, conv_config);
-        let bn3 = batch_norm2d(p.borrow(), 64, batch_config);
+        let conv3 = conv2d(p.borrow() / "conv3", 384, 64, 1, conv_config);
+        let bn3 = batch_norm2d(p.borrow() / "bn3", 64, batch_config);
         let relu3 = ReLU {};
 
-        let conv4 = conv2d(p.borrow(), 64, 64, 3, conv_pad_config);
-        let bn4 = batch_norm2d(p.borrow(), 64, batch_config);
+        let conv4 = conv2d(p.borrow() / "conv4", 64, 64, 3, conv_pad_config);
+        let bn4 = batch_norm2d(p.borrow() / "bn4", 64, batch_config);
         let relu4 = ReLU {};
 
-        let conv5 = conv2d(p.borrow(), 192, 32, 1, conv_config);
-        let bn5 = batch_norm2d(p.borrow(), 32, batch_config);
+        let conv5 = conv2d(p.borrow() / "conv5", 192, 32, 1, conv_config);
+        let bn5 = batch_norm2d(p.borrow() / "bn5", 32, batch_config);
         let relu5 = ReLU {};
 
-        let conv6 = conv2d(p.borrow(), 32, 32, 3, conv_pad_config);
-        let bn6 = batch_norm2d(p.borrow(), 32, batch_config);
+        let conv6 = conv2d(p.borrow() / "conv6", 32, 32, 3, conv_pad_config);
+        let bn6 = batch_norm2d(p.borrow() / "bn6", 32, batch_config);
         let relu6 = ReLU {};
 
-        let conv7 = conv2d(p.borrow(), 32, 32, 3, conv_pad_config);
-        let bn7 = batch_norm2d(p.borrow(), 32, batch_config);
+        let conv7 = conv2d(p.borrow() / "conv7", 32, 32, 3, conv_pad_config);
+        let bn7 = batch_norm2d(p.borrow() / "bn7", 32, batch_config);
         let relu7 = ReLU {};
 
         Merge {
@@ -281,13 +281,13 @@ impl Output {
             ..Default::default()
         };
 
-        let conv1 = conv2d(p.borrow(), 32, 1, 1, conv_config);
+        let conv1 = conv2d(p.borrow() / "conv1", 32, 1, 1, conv_config);
         let sigmoid1 = Sigmoid {};
 
-        let conv2 = conv2d(p.borrow(), 32, 1, 1, conv_config);
+        let conv2 = conv2d(p.borrow() / "conv2", 32, 1, 1, conv_config);
         let sigmoid2 = Sigmoid {};
 
-        let conv3 = conv2d(p.borrow(), 32, 1, 1, conv_config);
+        let conv3 = conv2d(p.borrow() / "conv3", 32, 1, 1, conv_config);
         let sigmoid3 = Sigmoid {};
 
         Output {
@@ -314,10 +314,9 @@ impl Module for Output {
     }
 }
 
-
 #[derive(Debug)]
 struct Extractor {
-    features: Sequential
+    features: Sequential,
 }
 
 impl Extractor {
@@ -325,35 +324,57 @@ impl Extractor {
     where
         P: Borrow<tch::nn::Path<'p>>,
     {
-
-        let vgg16_bn = VGG::new(p.borrow(),make_layers(CFG, true, p.borrow()));
+        let vgg16_bn = VGG::new(p.borrow(), make_layers(CFG, true, p.borrow()));
 
         Extractor {
-            features: vgg16_bn.features
+            features: vgg16_bn.features,
         }
     }
 }
 
-// impl Module for Extractor {
-//     fn forward(&self, xs: &Tensor) -> Tensor {
-//         let mut x = Tensor::new();
-//         let out = vec![];
+impl Module for Extractor {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        let mut x = Tensor::new();
+        let out = vec![xs];
 
+        // for feature in self.features {
+        //     x = feature.forward(&xs);
+        //     if xs.size()[2] <= 32 {
+        //         out.push(x);
+        //     }
+        // }
+        // convert out to tensor
+        Tensor::cat(&out[1..], 1)
+    }
+}
 
-//         for feature in self.features {
-//             x = feature.forward(&xs);
-//             if xs.size()[2] <= 32 {
-//                 out.push(x);
-//             }
-//         }
-
-//         &out[1..]
-//     }
-// }
-
-
+#[derive(Debug)]
 struct EAST {
     extractor: Extractor,
     merge: Merge,
     output: Output,
+}
+
+impl EAST {
+    pub fn new<'p, P>(p: P) -> EAST
+    where
+        P: Borrow<tch::nn::Path<'p>>,
+    {
+        let extractor = Extractor::new(p.borrow());
+        let merge = Merge::new(p.borrow());
+        let output = Output::new(p.borrow(), 512);
+
+        EAST {
+            extractor,
+            merge,
+            output,
+        }
+    }
+}
+
+impl Module for EAST {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        self.output
+            .forward(&self.merge.forward(&self.extractor.forward(xs)))
+    }
 }
