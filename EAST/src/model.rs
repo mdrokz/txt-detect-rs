@@ -1,8 +1,10 @@
-use std::{borrow::Borrow, f64::consts::PI};
+use std::{borrow::Borrow, f64::consts::PI, any::{Any, TypeId}};
 
 use tch::{
     nn::{
-        conv2d, linear, seq, BatchNormConfig, Conv2D, ConvConfig, LinearConfig, Module, Sequential,
+        conv2d,
+        init::{FanInOut, NonLinearity, NormalOrUniform},
+        linear, seq, BatchNormConfig, Conv2D, ConvConfig, LinearConfig, Module, Sequential,
     },
     Tensor,
 };
@@ -37,6 +39,18 @@ where
 
     let conv_config = ConvConfig {
         padding: (kernel_size - 1) / 2,
+        ws_init: tch::nn::Init::Kaiming {
+            dist: NormalOrUniform::Normal,
+            fan: FanInOut::FanOut,
+            non_linearity: NonLinearity::ReLU,
+        },
+        bs_init: tch::nn::Init::Const(0.0),
+        ..Default::default()
+    };
+
+    let batch_config = BatchNormConfig {
+        ws_init: tch::nn::Init::Const(1.0),
+        bs_init: tch::nn::Init::Const(0.0),
         ..Default::default()
     };
 
@@ -44,11 +58,21 @@ where
         if v == M {
             layers = layers.add(MaxPool2d(&[2, 2], &[2, 2]));
         } else {
-            let conv2d = conv2d(p.borrow() / "conv", in_channels, v as i64, kernel_size, conv_config);
+            let conv2d = conv2d(
+                p.borrow() / "conv",
+                in_channels,
+                v as i64,
+                kernel_size,
+                conv_config,
+            );
 
             if batch_norm {
                 layers = layers.add(conv2d);
-                layers = layers.add(batch_norm2d(p.borrow() / "bn", v as i64, Default::default()));
+                layers = layers.add(batch_norm2d(
+                    p.borrow() / "bn",
+                    v as i64,
+                    batch_config,
+                ));
                 layers = layers.add(ReLU {});
             } else {
                 layers = layers.add(conv2d);
@@ -78,12 +102,20 @@ impl VGG {
         let avgpool = AdaptiveAvgPool2d([7, 7]);
 
         let linear_config = LinearConfig {
-            // ws_init: tch::nn::Init::Uniform { lo: (), up: () },
+            ws_init: tch::nn::Init::Randn {
+                mean: 0.0,
+                stdev: 0.001,
+            },
             bs_init: Some(tch::nn::Init::Const(0.0)),
             ..Default::default()
         };
 
-        classifer = classifer.add(linear(p.borrow() / "linear", 512 * 7 * 7, 4096, linear_config));
+        classifer = classifer.add(linear(
+            p.borrow() / "linear",
+            512 * 7 * 7,
+            4096,
+            linear_config,
+        ));
 
         classifer = classifer.add(ReLU {});
 
@@ -149,12 +181,22 @@ impl Merge {
     {
         let conv_pad_config = ConvConfig {
             padding: 1,
+            ws_init: tch::nn::Init::Kaiming {
+                dist: NormalOrUniform::Normal,
+                fan: FanInOut::FanOut,
+                non_linearity: NonLinearity::ReLU,
+            },
             bs_init: tch::nn::Init::Const(0.0),
             ..Default::default()
         };
 
         let conv_config = ConvConfig {
             bs_init: tch::nn::Init::Const(0.0),
+            ws_init: tch::nn::Init::Kaiming {
+                dist: NormalOrUniform::Normal,
+                fan: FanInOut::FanOut,
+                non_linearity: NonLinearity::ReLU,
+            },
             ..Default::default()
         };
 
@@ -277,6 +319,11 @@ impl Output {
         P: Borrow<tch::nn::Path<'p>>,
     {
         let conv_config = ConvConfig {
+            ws_init: tch::nn::Init::Kaiming {
+                dist: NormalOrUniform::Normal,
+                fan: FanInOut::FanOut,
+                non_linearity: NonLinearity::ReLU,
+            },
             bs_init: tch::nn::Init::Const(0.0),
             ..Default::default()
         };
@@ -335,14 +382,17 @@ impl Extractor {
 impl Module for Extractor {
     fn forward(&self, xs: &Tensor) -> Tensor {
         let mut x = Tensor::new();
-        let out = vec![xs];
+        let mut out = vec![];
 
-        // for feature in self.features {
-        //     x = feature.forward(&xs);
-        //     if xs.size()[2] <= 32 {
-        //         out.push(x);
-        //     }
-        // }
+
+        let features = self.features.get_layers();
+
+        for feature in features {
+            x = feature.forward(&xs);
+            if xs.size()[2] <= 32 {
+                out.push(x);
+            }
+        }
         // convert out to tensor
         Tensor::cat(&out[1..], 1)
     }
