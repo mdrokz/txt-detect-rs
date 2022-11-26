@@ -1,21 +1,13 @@
-use image::imageops::resize;
-use image::{RgbImage, ImageBuffer, Rgb};
-// use image::{ImageBuffer, RgbImage};
+use geo::{Area, BooleanOps, ConvexHull, Polygon};
+use image::imageops::{crop, resize};
+use image::{ImageBuffer, Rgb, RgbImage, SubImage};
 use ndarray::{
-    array, concatenate, s, Array, ArrayBase, Axis, Dim, Dimension, IxDynImpl, OwnedRepr, ViewRepr,
+    array, concatenate, s, Array, Array1, ArrayBase, Axis, Dim, IxDynImpl, OwnedRepr, ViewRepr,
 };
 
 use rand::random;
 
 type Array2 = ArrayBase<OwnedRepr<f64>, Dim<[usize; 2]>>;
-
-// pub fn round<A, D>(a: Array<A, D>) -> Array<A, D>
-// where
-//     A: Float,
-//     D: Dimension,
-// {
-//     a.mapv(|x| x.round())
-// }
 
 // calculate the Euclidean distance
 fn cal_distance(x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
@@ -113,7 +105,7 @@ fn rotate_vertices<'a>(
     // (res + anchor).T.reshape(-1) negative reshape
     let r = (res + anchor).t();
 
-    r.into_shape(1).unwrap()
+    r.into_shape((8,)).unwrap()
 }
 
 fn get_boundary(vertices: &Array2) -> (f64, f64, f64, f64) {
@@ -211,7 +203,11 @@ fn rotate_all_pixels<'a>(
     (rotated_x.to_owned(), rotated_y.to_owned())
 }
 
-fn adjust_height(image: RgbImage, vertices: Array2, ratio: f64) -> (ImageBuffer<Rgb<u8>, Vec<u8>>, Array2) {
+fn adjust_height(
+    image: RgbImage,
+    vertices: Array2,
+    ratio: f64,
+) -> (ImageBuffer<Rgb<u8>, Vec<u8>>, Array2) {
     // let ratio_h = 1.0 + ratio * (Array::random((), Uniform::new(0.0, 1.0)) * 2.0 - 1.0);
     let ratio_h = 1.0 + ratio * (random::<f64>() * 2.0 - 1.0);
 
@@ -238,4 +234,213 @@ fn adjust_height(image: RgbImage, vertices: Array2, ratio: f64) -> (ImageBuffer<
     }
 
     (img, vertices)
+}
+
+fn is_cross_text(start_loc: (f64, f64), length: f64, vertices: Array2) -> bool {
+    if vertices.len() == 0 {
+        return false;
+    }
+
+    let (start_w, start_h) = start_loc;
+
+    let a = array![
+        [start_w, start_h],
+        [start_w + length, start_h],
+        [start_w + length, start_h + length],
+        [start_w, start_h + length]
+    ]
+    .into_shape((4, 2))
+    .unwrap();
+
+    let points = a.axis_iter(Axis(0)).map(|x| (x[0], x[1])).collect();
+    // convert a to rust vector
+
+    let p1 = Polygon::new(points, vec![]).convex_hull();
+
+    for vertice in vertices.outer_iter() {
+        let points = vertice
+            .into_shape((4, 2))
+            .unwrap()
+            .axis_iter(Axis(0))
+            .map(|x| (x[0], x[1]))
+            .collect();
+
+        let p2 = Polygon::new(points, vec![]).convex_hull();
+
+        let inter = p1.intersection(&p2).signed_area();
+
+        if 0.01 <= inter / p2.signed_area() && inter / p2.signed_area() <= 0.99 {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn crop_image(
+    image: &mut RgbImage,
+    vertices: Array2,
+    labels: Array2,
+    length: u32,
+) -> (
+    SubImage<&mut ImageBuffer<Rgb<u8>, Vec<u8>>>,
+    ArrayBase<OwnedRepr<f64>, Dim<IxDynImpl>>,
+) {
+    let (h, w) = image.dimensions();
+
+    if h <= w && w < length {
+        *image = resize(
+            &*image,
+            length as u32,
+            h * length / w,
+            image::imageops::FilterType::Gaussian,
+        );
+    } else if h < w && h < length {
+        *image = resize(
+            &*image,
+            w * length / h,
+            length as u32,
+            image::imageops::FilterType::Gaussian,
+        );
+    }
+
+    let ratio_h = image.height() / w;
+    let ratio_w = image.width() / h;
+
+    assert!(ratio_w >= 1 && ratio_h >= 1);
+
+    // let new_vertices = Array2::zeros(vertices.shape());
+    let mut new_vertices: ArrayBase<OwnedRepr<f64>, Dim<IxDynImpl>> =
+        Array::zeros(vertices.shape());
+
+    if vertices.len() > 0 {
+        new_vertices[[0, 0]] = vertices[[0, 0]] * ratio_w as f64;
+        new_vertices[[1, 0]] = vertices[[1, 0]] * ratio_h as f64;
+        new_vertices[[2, 0]] = vertices[[2, 0]] * ratio_w as f64;
+        new_vertices[[3, 0]] = vertices[[3, 0]] * ratio_h as f64;
+        new_vertices[[4, 0]] = vertices[[4, 0]] * ratio_w as f64;
+        new_vertices[[5, 0]] = vertices[[5, 0]] * ratio_h as f64;
+        new_vertices[[6, 0]] = vertices[[6, 0]] * ratio_w as f64;
+        new_vertices[[7, 0]] = vertices[[7, 0]] * ratio_h as f64;
+    }
+
+    let remain_h = image.height() - length;
+    let remain_w = image.width() - length;
+
+    let mut cnt = 0;
+
+    let mut start_w = 0;
+    let mut start_h = 0;
+
+    loop {
+        cnt += 1;
+
+        start_w = random::<u32>() * remain_w;
+        start_h = random::<u32>() * remain_h;
+
+        // new_vertices[labels==1,:]
+
+        // let mut text_vertices = new_vertices
+        //     .slice(s![labels == 1, ..])
+        let v = new_vertices.clone().into_shape((2, 2)).unwrap();
+
+        if !is_cross_text((start_w.into(), start_h.into()), length.into(), v) && cnt > 1000 {
+            break;
+        }
+    }
+
+    let region = crop(image, start_w, start_h, start_w + length, start_h + length);
+
+    if new_vertices.len() == 0 {
+        (region, new_vertices)
+    } else {
+        new_vertices[[0, 0]] -= start_w as f64;
+        new_vertices[[1, 0]] -= start_h as f64;
+        new_vertices[[2, 0]] -= start_w as f64;
+        new_vertices[[3, 0]] -= start_h as f64;
+        new_vertices[[4, 0]] -= start_w as f64;
+        new_vertices[[5, 0]] -= start_h as f64;
+        new_vertices[[6, 0]] -= start_w as f64;
+        new_vertices[[7, 0]] -= start_h as f64;
+
+        (region, new_vertices)
+    }
+}
+
+fn find_min_rect_angle(vertices: Array2) -> f64 {
+    let angle_interval = 1;
+    let angle_list = (0..90).step_by(angle_interval).collect::<Vec<_>>();
+    let mut area_list = vec![];
+
+    for theta in angle_list {
+        let rotated = rotate_vertices(vertices, theta as f64 / 180.0 * std::f64::consts::PI, None);
+        let x1 = rotated[0];
+        let y1 = rotated[1];
+        let x2 = rotated[2];
+        let y2 = rotated[3];
+        let x3 = rotated[4];
+        let y3 = rotated[5];
+        let x4 = rotated[6];
+        let y4 = rotated[7];
+
+        let temp_area = (x1.max(x2).max(x3).max(x4) - x1.min(x2).min(x3).min(x4))
+            * (y1.max(y2).max(y3).max(y4) - y1.min(y2).min(y3).min(y4));
+
+        area_list.push(temp_area);
+    }
+
+    let sorted_area_index = (0..area_list.len())
+        .map(|i| (i, area_list[i]))
+        .sorted_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+        .map(|(i, _)| i)
+        .collect::<Vec<_>>();
+
+    let mut min_error = f64::INFINITY;
+    let mut best_index: i64 = -1;
+    let rank_num = 10;
+
+    for index in sorted_area_index[..rank_num].iter() {
+        let rotated = rotate_vertices(
+            vertices,
+            angle_list[*index] as f64 / 180.0 * std::f64::consts::PI,
+            None,
+        );
+        let temp_error = cal_error(rotated);
+
+        if temp_error < min_error {
+            min_error = temp_error;
+            best_index = *index;
+        }
+    }
+
+    if best_index == -1 {
+        angle_list[angle_list.len() - 1] as f64 / 180.0 * std::f64::consts::PI
+    } else {
+        angle_list[best_index as usize] as f64 / 180.0 * std::f64::consts::PI
+    }
+
+}
+
+fn extract_vertices(lines: Vec<String>) -> (Array2, Array1<i32>) {
+    let mut vertices = vec![];
+    let mut labels = vec![];
+
+    for line in lines {
+        let mut v = vec![];
+        for s in line.split(',').take(8) {
+            v.push(s.parse::<i64>().unwrap() as f64);
+        }
+        vertices.push(v);
+        let label = if line.contains("###") { 0 } else { 1 };
+        labels.push(label);
+    }
+
+    (
+        Array2::from_shape_vec(
+            (vertices.len(), 8),
+            vertices.into_iter().flatten().collect(),
+        )
+        .unwrap(),
+        Array::from(labels),
+    )
 }
