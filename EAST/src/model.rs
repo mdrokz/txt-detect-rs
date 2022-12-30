@@ -399,7 +399,7 @@ impl Module for Extractor {
 }
 
 #[derive(Debug)]
-struct EAST {
+pub struct EAST {
     extractor: Extractor,
     merge: Merge,
     output: Output,
