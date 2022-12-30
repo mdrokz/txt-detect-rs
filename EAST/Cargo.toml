@@ -1,5 +1,5 @@
 [package]
-name = "EAST"
+name = "east_model"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,7 +10,12 @@ edition = "2021"
 tch = {git = "https://github.com/mdrokz/tch-rs", rev ="65d762d1e22c7ac54bd67950def9f60780a099ca"}
 ndarray = "0.15.4"
 # ndarray = {git = "https://github.com/mdrokz/ndarray"}
-image = "0.24.5"
+image = "0.24"
+regex = "1.7.0"
 # ndarray-rand = "0.14.0"
 rand = "0.8.4"
 geo = "0.23.0"
+# hsl = "0.1.1"
+opencv = "0.70"
+# cv-convert = {version = "0.21.2",features = ["ndarray_0-15","tch_0-8"]}
+cv-convert = {git = "https://github.com/mdrokz/rust-cv-convert",features = ["ndarray_0-15","tch_0-9","opencv_0-70","image_0-24"]}
