@@ -36,12 +36,7 @@ fn get_geo_loss(gt_geo: &Tensor, pred_geo: &Tensor) -> (Tensor, Tensor) {
 }
 
 #[derive(Debug)]
-struct Loss {
-    gt_score: Tensor,
-    pred_score: Tensor,
-    gt_geo: Tensor,
-    pred_geo: Tensor,
-    ignored_map: Tensor,
+pub struct Loss {
 }
 
 impl Loss {
@@ -49,26 +44,35 @@ impl Loss {
 }
 
 impl Module for Loss {
-    fn forward(&self, _xs: &tch::Tensor) -> tch::Tensor {
+    fn forward(&self, xs: &tch::Tensor) -> tch::Tensor {
 
-        let gt_sum = f64::from(&self.gt_score.sum(tch::Kind::Float));
+        let loss_parts = xs.split(5, 1);
+
+        let gt_score = &loss_parts[0];
+        let pred_score = &loss_parts[1];
+        let gt_geo = &loss_parts[2];
+        let pred_geo = &loss_parts[3];
+        let ignored_map = &loss_parts[4];
+
+
+        let gt_sum = f64::from(gt_score.sum(tch::Kind::Float));
 
         if gt_sum < 1.0 {
-            return Tensor::sum(&(&self.pred_score + &self.pred_geo), tch::Kind::Float) * 0;
+            return Tensor::sum(&(pred_score + pred_geo), tch::Kind::Float) * 0;
         }
 
         let classify_loss = get_dice_loss(
-            &self.gt_score,
-            &(&self.pred_score * (1 - &self.ignored_map)),
+            gt_score,
+            &(pred_score * (1 - ignored_map)),
         );
 
-        let (iou_loss_map, angle_loss_map) = get_geo_loss(&self.gt_geo, &self.pred_geo);
+        let (iou_loss_map, angle_loss_map) = get_geo_loss(gt_geo, pred_geo);
 
-        let angle_loss = Tensor::sum(&(&angle_loss_map * &self.gt_score), tch::Kind::Uint8)
-            / Tensor::sum(&self.gt_score, tch::Kind::Uint8);
+        let angle_loss = Tensor::sum(&(&angle_loss_map * gt_score), tch::Kind::Uint8)
+            / Tensor::sum(gt_score, tch::Kind::Uint8);
 
-        let iou_loss = Tensor::sum(&(&iou_loss_map * &self.gt_score), tch::Kind::Uint8)
-            / Tensor::sum(&self.gt_score, tch::Kind::Uint8);
+        let iou_loss = Tensor::sum(&(&iou_loss_map * gt_score), tch::Kind::Uint8)
+            / Tensor::sum(gt_score, tch::Kind::Uint8);
 
         println!(
             "classify_loss: {:?}, angle_loss: {:?} iou loss {:?}",
