@@ -1,1 +1,5 @@
 /target
+*.zip
+EAST/target
+ch4_training_images
+ch4_training_localization_transcription_gt
