@@ -1,7 +1,7 @@
 use std::f32::consts::PI;
 use std::{fs, io};
 
-use cv_convert::{FromCv, TchTensorAsImage, TryIntoCv};
+use cv_convert::{FromCv, IntoCv, TchTensorAsImage, TryIntoCv};
 use geo::{Area, BooleanOps, ConvexHull, Polygon};
 use image::imageops::{brighten, contrast, crop, resize};
 use image::{
@@ -14,11 +14,11 @@ use ndarray::{
 
 use regex::Regex;
 
-use opencv::core::{Mat, Scalar};
+use opencv::core::{Mat, Scalar, ToInputArray, _InputArray};
 use opencv::imgproc::fill_poly;
 
 use rand::{random, thread_rng, Rng};
-use tch::{Kind, Tensor};
+use tch::{Device, Kind, Tensor};
 
 type Array2 = ArrayBase<OwnedRepr<f32>, Dim<[usize; 2]>>;
 
@@ -99,7 +99,7 @@ fn shrink_poly(vertices: &Array1<f32>, coef: f32) -> Array1<f32> {
 
     let mut vertices = vertices.to_owned();
 
-    println!("just before move_points");
+    // println!("just before move_points");
 
     move_points(&mut vertices, 0 + offset, 1 + offset, &r, coef);
     move_points(&mut vertices, 2 + offset, 3 + offset, &r, coef);
@@ -285,8 +285,6 @@ fn is_cross_text(
 
     let p1 = Polygon::new(points, vec![]).convex_hull();
 
-    println!("p1 {:?}", p1);
-
     for vertice in vertices.outer_iter() {
         // println!("point vertice {:?}", vertice);
         let points = vertice
@@ -327,7 +325,7 @@ fn crop_image(
             h * length / w,
             image::imageops::FilterType::Gaussian,
         );
-        println!("Dimensions resize 1 {:?}", image.dimensions());
+        // println!("Dimensions resize 1 {:?}", image.dimensions());
     } else if h < w && h < length {
         // let mut image = image.borrow_mut();
         *image = resize(
@@ -336,7 +334,7 @@ fn crop_image(
             length,
             image::imageops::FilterType::Gaussian,
         );
-        println!("Dimensions resize 2 {:?}", image.dimensions());
+        // println!("Dimensions resize 2 {:?}", image.dimensions());
     }
 
     let ratio_h = image.height() / w;
@@ -358,8 +356,8 @@ fn crop_image(
         //         .slice_axis(Axis(1), slice_w)
         //         .mapv(|v| v * Into::<f32>::into(ratio_w)),
         // );
-        println!("new vertice {:?}", new_vertices.ndim());
-        println!("s dims {:?}", s![..,0..6; 2].in_ndim());
+        // println!("new vertice {:?}", new_vertices.ndim());
+        // println!("s dims {:?}", s![..,0..6; 2].in_ndim());
         new_vertices
             .slice_mut(s![..,0..6; 2])
             .assign(&vertices.slice(s![..,0..6; 2]).mapv(|v| v * ratio_w as f32));
@@ -382,7 +380,7 @@ fn crop_image(
         //     .mapv(|v| v * Into::<f32>::into(ratio_h));
     }
 
-    println!("new vertices: {:?}", new_vertices);
+    // println!("new vertices: {:?}", new_vertices);
 
     let remain_h = image.height() - length;
     let remain_w = image.width() - length;
@@ -398,8 +396,8 @@ fn crop_image(
         start_w = random::<f32>() * remain_w as f32;
         start_h = random::<f32>() * remain_h as f32;
 
-        println!("start_w: {:?}", start_w);
-        println!("start_h: {:?}", start_h);
+        // println!("start_w: {:?}", start_w);
+        // println!("start_h: {:?}", start_h);
 
         // new_vertices[labels==1,:]
 
@@ -435,13 +433,13 @@ fn crop_image(
         }
     }
 
-    println!("img: {:?}", image.dimensions());
+    // println!("img: {:?}", image.dimensions());
 
     // convert start_w to i32
     // let start_w = Into::<i32>::into(start_w);
 
-    println!("start_w: {}, start_h: {}", start_w as i32, start_h as i32);
-    println!("length: {}", length);
+    // println!("start_w: {}, start_h: {}", start_w as i32, start_h as i32);
+    // println!("length: {}", length);
 
     let region = crop(
         image,
@@ -635,10 +633,6 @@ fn index_array(
     a: ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>>,
 ) -> ArrayBase<OwnedRepr<f32>, Dim<[usize; 2]>> {
     let mut b = Array::zeros((rows.shape()[0], cols.shape()[1]));
-    println!("b: {:?}", b.shape());
-    println!("a: {:?}", a.shape());
-    println!("rows: {:?}", rows.shape());
-    println!("cols: {:?}", cols.shape());
     // for (i, row) in cols.iter().enumerate() {
     //     for (j, col) in rows.iter().enumerate() {
     //         b[[i, j]] = a[[*row as usize, *col as usize]];
@@ -656,30 +650,39 @@ fn index_array(
     b
 }
 
+#[repr(transparent)]
+struct MatWrapper(Mat);
+
+impl ToInputArray for MatWrapper {
+    fn input_array(&self) -> std::result::Result<_InputArray, opencv::Error> {
+        Ok(self.0.input_array().unwrap())
+    }
+}
+
 // rust version
 fn get_score_geo(
-    img: &mut RgbImage,
+    img: &RgbImage,
     vertices: &Array2,
     labels: &Array1<i32>,
     scale: f32,
     length: i64,
 ) -> (Tensor, Tensor, Tensor) {
-    println!("scale {}", img.height());
-    println!("dimensions {}", (img.height() as f32 * scale) as usize);
+    // println!("scale {}", img.height());
+    // println!("dimensions {}", (img.height() as f32 * scale) as usize);
     let mut score_map: Array3<f32> = Array3::zeros((
-        128, // (img.height() as f32 * scale) as usize,
-        128, // (img.width() as f32 * scale) as usize,
-        1,
+        // (img.height() as f32 * scale) as usize,
+        // (img.width() as f32 * scale) as usize,
+        128, 128, 1,
     ));
     let mut geo_map: Array3<f32> = Array3::zeros((
-        128, // (img.height() as f32 * scale) as usize,
-        128, // (img.width() as f32 * scale) as usize,
-        5,
+        // (img.height() as f32 * scale) as usize,
+        // (img.width() as f32 * scale) as usize,
+        128, 128, 5,
     ));
     let mut ignored_map: Array3<f32> = Array3::zeros((
-        128, // (img.height() as f32 * scale) as usize,
-        128, // (img.width() as f32 * scale) as usize,
-        1,
+        // (img.height() as f32 * scale) as usize,
+        // (img.width() as f32 * scale) as usize,
+        128, 128, 1,
     ));
 
     let index = Array::range(0., length as f32, 1. / scale);
@@ -693,8 +696,9 @@ fn get_score_geo(
 
         // println!("vertice nrows: {:?}", vertice);
 
-        if labels[0] == 0 {
-            let v = scale * vertice;
+        if labels[i] == 0 {
+            let mut v = scale * vertice.into_shape((4, 2)).unwrap().to_owned();
+            v.mapv_inplace(|x| x.round());
             ignored_polys.push(v.mapv(|x| x as i32));
             continue;
         }
@@ -716,13 +720,13 @@ fn get_score_geo(
         polys.push(poly.clone());
 
         let shape = score_map.shape();
-        println!("shape: {:?}", shape);
+        // println!("shape: {:?}", shape);
         // let shape: Vec<usize> = shape[..shape.len() - 1].into();
 
         // let temp_mask: ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>> = Array::zeros(shape);
 
         let shape: Vec<usize> = score_map.shape()[..2].into();
-        println!("shape: {:?}", shape);
+        // println!("shape: {:?}", shape);
         let temp_mask: ArrayBase<OwnedRepr<f32>, Dim<IxDynImpl>> = Array::zeros(shape);
 
         // score_map.shape[:-1]
@@ -742,7 +746,10 @@ fn get_score_geo(
         // temp_mask to mat
         let mut temp_mat = Mat::from_slice_2d(&temp_slice).unwrap();
 
-        let poly_slice: Vec<Vec<i32>> = poly.axis_iter(Axis(0)).map(|x| vec![x[0], x[1]]).collect();
+        let poly_slice: Vec<Vec<i32>> = poly
+            .outer_iter()
+            .map(|row| row.iter().map(|x| x.to_owned()).collect::<Vec<i32>>())
+            .collect();
 
         // println!("poly_slice: {:?}", poly_slice);
 
@@ -773,14 +780,14 @@ fn get_score_geo(
         // let anchor_x = vertices.row(i)[0];
         // let anchor_y = vertices.row(i)[1];
 
-        println!("end fill_poly");
+        // println!("end fill_poly");
 
         let rotated_vertices = rotate_vertices(&vertice, theta, None);
         let (x_min, x_max, y_min, y_max) = get_boundary(&rotated_vertices);
         let (rotated_x, rotated_y) =
             rotate_all_pixels(rotate_mat, anchor_x, anchor_y, length as f32);
 
-        println!("end rotate_all_pixels");
+        // println!("end rotate_all_pixels");
 
         let d1 = rotated_y.clone() - y_min;
 
@@ -798,40 +805,40 @@ fn get_score_geo(
 
         let d4_mask = d4.mapv(|x| if x < 0. { 1. } else { 0. });
 
-        println!("end masking");
+        // println!("end masking");
 
         // convert geo_map[:,:,0] += d1[index_y, index_x] * temp_mask
         // index d1 by index_y, index_x
 
         // geo_map[[0, 0, 0]] += d1[[index_y, index_x]] * temp_mask
 
-        println!("{:?} mat", temp_mat);
+        // println!("{:?} mat", temp_mat);
 
         let temp_tensor: ArrayView<'_, f32, Dim<IxDynImpl>> = (&temp_mat).try_into_cv().unwrap();
 
-        let temp_tensor = temp_tensor.into_shape((128,128)).unwrap().to_owned();
+        let temp_tensor = temp_tensor.into_shape((128, 128)).unwrap().to_owned();
 
         // println!("MATT {:?}", temp_tensor);
 
         // let temp_tensor: ArrayView<'_, f32, Dim<[usize; 2]>> = (&temp_mat).try_into_cv().unwrap();
-        println!("temp_tensor {:?}", temp_tensor.shape());
-        println!(
-            "indexed array d1 {:?}",
-            index_array(index_y.clone(), index_x.clone(), d1_mask.clone()).mapv(|f| f as f32)
-                * temp_tensor.clone()
-        );
-        println!(
-            "indexed array d2 {:?}",
-            index_array(index_y.clone(), index_x.clone(), d2_mask.clone())
-        );
-        println!(
-            "indexed array d3 {:?}",
-            index_array(index_y.clone(), index_x.clone(), d3_mask.clone())
-        );
-        println!(
-            "indexed array d4 {:?}",
-            index_array(index_y.clone(), index_x.clone(), d4_mask.clone())
-        );
+        // println!("temp_tensor {:?}", temp_tensor.shape());
+        // println!(
+        //     "indexed array d1 {:?}",
+        //     index_array(index_y.clone(), index_x.clone(), d1_mask.clone()).mapv(|f| f as f32)
+        //         * temp_tensor.clone()
+        // );
+        // println!(
+        //     "indexed array d2 {:?}",
+        //     index_array(index_y.clone(), index_x.clone(), d2_mask.clone())
+        // );
+        // println!(
+        //     "indexed array d3 {:?}",
+        //     index_array(index_y.clone(), index_x.clone(), d3_mask.clone())
+        // );
+        // println!(
+        //     "indexed array d4 {:?}",
+        //     index_array(index_y.clone(), index_x.clone(), d4_mask.clone())
+        // );
 
         let g = geo_map.clone();
 
@@ -866,31 +873,64 @@ fn get_score_geo(
 
     println!("geo map assignment complete");
 
-    let row: i32 = ignored_map.shape()[0].try_into().unwrap();
+    // let row: i32 = ignored_map.shape()[0].try_into().unwrap();
 
     // size of column
-    let col: i32 = ignored_map.shape()[1].try_into().unwrap();
+    // let col: i32 = ignored_map.shape()[1].try_into().unwrap();
 
-    let typ = opencv::core::CV_MAKETYPE(1, 1 as i32);
+    let (ignored_map_rows, ignored_map_cols, ignored_map_channels) = ignored_map.dim();
+
+    let ignored_typ = opencv::core::CV_MAKETYPE(opencv::core::CV_32S, ignored_map_channels as i32);
+
+    let (score_map_rows, score_map_cols, score_map_channels) = score_map.dim();
+
+    let score_typ = opencv::core::CV_MAKETYPE(opencv::core::CV_32S, score_map_channels as i32);
 
     unsafe {
         let mut ignored_map_mat = Mat::new_rows_cols_with_data(
-            row,
-            col,
-            typ,
-            ignored_map.as_ptr() as *mut _,
+            ignored_map_rows as i32,
+            ignored_map_cols as i32,
+            ignored_typ,
+            ignored_map.as_ptr() as *mut std::ffi::c_void,
             opencv::core::Mat_AUTO_STEP,
         )
         .unwrap();
 
-        let ignored_polys_mat = Mat::new_rows_cols_with_data(
-            ignored_polys.len() as i32,
-            1,
-            typ,
-            ignored_polys.as_ptr() as *mut _,
-            opencv::core::Mat_AUTO_STEP,
-        )
-        .unwrap();
+        // println!("ignored map mat {:?}", ignored_map_mat);
+
+        // let ignored_poly_slice: Vec<Vec<i32>> = ignored_polys
+        //     .iter()
+        //     .map(|x| x.iter().map(|y| y.to_owned()).collect::<Vec<i32>>())
+        //     .collect();
+
+        let ignored_poly_slice: Vec<Vec<i32>> = ignored_polys
+            .iter()
+            .map(|x| {
+                x.to_owned()
+                    .outer_iter()
+                    .map(|row| row.iter().map(|x| x.to_owned()).collect::<Vec<i32>>())
+                    .collect::<Vec<Vec<i32>>>()
+            })
+            .flatten()
+            .collect();
+
+        // let ignored_polys_mat = Mat::new_rows_cols_with_data(
+        //     ignored_polys.len() as i32,
+        //     1,
+        //     typ,
+        //     ignored_polys.as_ptr() as *mut _,
+        //     opencv::core::Mat_AUTO_STEP,
+        // )
+        // .unwrap();
+
+        // println!("ignored poly slice {:?}", ignored_poly_slice.len());
+
+        let ignored_polys_mat = opencv::core::Mat::from_slice_2d(&ignored_poly_slice).unwrap();
+        // let ignored_polys_mat = opencv::core::Mat::from_slice(&ignored_poly_slice).unwrap();
+
+        // println!("ignored polys mat {:?}", ignored_polys_mat);
+
+        // opencv::core::vconcat(&MatWrapper(ignored_polys_mat), dst);
 
         fill_poly(
             &mut ignored_map_mat,
@@ -902,28 +942,34 @@ fn get_score_geo(
         )
         .unwrap();
 
+        println!("end ignored poly");
+
         let mut score_mat = Mat::new_rows_cols_with_data(
-            score_map.shape()[0] as i32,
-            score_map.shape()[1] as i32,
-            typ,
+            score_map_rows as i32,
+            score_map_cols as i32,
+            score_typ,
             score_map.as_ptr() as *mut _,
             opencv::core::Mat_AUTO_STEP,
         )
         .unwrap();
 
-        let polys_mat = Mat::new_rows_cols_with_data(
-            polys.len() as i32,
-            1,
-            typ,
-            polys.as_ptr() as *mut _,
-            opencv::core::Mat_AUTO_STEP,
-        )
-        .unwrap();
+        let polys_slice: Vec<Vec<i32>> = polys
+            .iter()
+            .map(|x| {
+                x.to_owned()
+                    .outer_iter()
+                    .map(|row| row.iter().map(|x| x.to_owned()).collect::<Vec<i32>>())
+                    .collect::<Vec<Vec<i32>>>()
+            })
+            .flatten()
+            .collect();
+
+        let polys_mat = opencv::core::Mat::from_slice_2d(&polys_slice).unwrap();
 
         fill_poly(
             &mut score_mat,
             &polys_mat,
-            Scalar::new(0., 0., 0., 0.),
+            Scalar::new(1., 1., 1., 1.),
             0,
             0,
             opencv::core::Point_::default(),
@@ -984,7 +1030,8 @@ fn saturation(input: ImageBuffer<Rgb<u8>, Vec<u8>>, factor: f32) -> ImageBuffer<
             let mut r = pixel.0[0] as f32 / 255.0;
             let mut g = pixel.0[1] as f32 / 255.0;
             let mut b = pixel.0[2] as f32 / 255.0;
-            let mut a = pixel.0[3] as f32 / 255.0;
+            // let mut a = pixel.0[3] as f32 / 255.0;
+            let mut a = 255.0;
             let l = 0.2126 * r + 0.7152 * g + 0.0722 * b + 0.0 * a;
             r = l + factor * (r - l);
             g = l + factor * (g - l);
@@ -1006,9 +1053,45 @@ fn saturation(input: ImageBuffer<Rgb<u8>, Vec<u8>>, factor: f32) -> ImageBuffer<
     output.into_rgb8()
 }
 
-fn normalize(input: &mut Tensor, mean: &Tensor, std: &Tensor) -> Tensor {
+fn normalize(input: &Tensor, mean: &Tensor, std: &Tensor) -> Tensor {
     // Normalize the input tensor
-    input.f_sub_(mean).unwrap().f_div_(std).unwrap()
+    input.subtract(mean).divide(std)
+}
+
+fn image_to_tensor(image: &RgbImage) -> Tensor {
+    let (width, height) = image.dimensions();
+    let data: Vec<u8> = image.to_vec();
+    let channels = 3;
+    let tensor_shape = [24, channels as i64, height as i64, width as i64];
+
+    let tensor1 = Tensor::zeros(&tensor_shape, (Kind::Float, Device::cuda_if_available()));
+
+    for i in 0..24 {
+        let tensor = Tensor::of_slice(data.as_slice()).view([
+            channels as i64,
+            height as i64,
+            width as i64,
+        ]);
+        tensor1
+            .get(i)
+            .copy_(&tensor);
+    }
+
+    // Create a Tensor in the tch crate using the pixel data and shape
+    // let tensor = Tensor::of_slice(data.as_slice()).view(tensor_shape);
+    // let mut tensor = Tensor::new(
+    //     &[height as i64, width as i64, 3],
+    //     (Device::Cpu, nn::Kind::Float),
+    // );
+    // for (x, y, pixel) in image.enumerate_pixels() {
+    //     let r = pixel[0] as f32 / 255.0;
+    //     let g = pixel[1] as f32 / 255.0;
+    //     let b = pixel[2] as f32 / 255.0;
+    //     tensor[(x as i64, y as i64, 0)] = r;
+    //     tensor[(x as i64, y as i64, 1)] = g;
+    //     tensor[(x as i64, y as i64, 2)] = b;
+    // }
+    tensor1
 }
 
 impl Iterator for DataSet {
@@ -1035,26 +1118,29 @@ impl Iterator for DataSet {
 
         let img = image::open(img_file).unwrap();
 
-        println!("DIMENSIONS 1 {:?}", img.dimensions());
+        // println!("DIMENSIONS 1 {:?}", img.dimensions());
 
         // get rgb image from the image
         let img = img.into_rgb8();
 
-        println!("DIMENSIONS 2 {:?}", img.dimensions());
+        println!("img tensor {:?}", image_to_tensor(&img));
+
+        // println!("DIMENSIONS 2 {:?}", img.dimensions());
 
         let (mut img, vertices) = adjust_height(img, vertices, 0.2);
 
-        println!("DIMENSIONS adjust {:?}", img.dimensions());
+        // println!("DIMENSIONS adjust {:?}", img.dimensions());
 
         let (mut img, vertices) = rotate_image(&mut img, vertices, 10.0);
 
-        println!("DIMENSIONS rotate {:?}", img.dimensions());
+        // println!("DIMENSIONS rotate {:?}", img.dimensions());
+        // println!("rotate tensor {:?}",image_to_tensor(img));
 
         // println!("vertices: {:?}", vertices);
 
         let (img, vertices) = crop_image(&mut img, vertices, labels.clone(), self.length);
 
-        println!("DIMENSIONS crop {:?}", img.dimensions());
+        // println!("DIMENSIONS crop {:?}", img.dimensions());
 
         let color_jitter = |input: &RgbImage| -> RgbImage {
             let mut rng = thread_rng();
@@ -1069,6 +1155,7 @@ impl Iterator for DataSet {
             let brightness_image = image::imageops::brighten(&contrast_image, brightness);
             let jittered = saturation(brightness_image, sat);
 
+            // println!("jittered {:?}", jittered);
             // let jittered = image::imageops::resize(&saturation_image, 256, 256, image::imageops::FilterType::Nearest);
             // Convert the jittered image back to a tensor
             jittered
@@ -1076,27 +1163,36 @@ impl Iterator for DataSet {
 
         let transform = |input: &RgbImage| -> Tensor {
             let jittered = color_jitter(input);
-            let mut tensor: Tensor = TchTensorAsImage::from_cv(&jittered).into_inner();
-            normalize(
-                &mut tensor,
-                &Tensor::of_slice(&[0.5, 0.5, 0.5]),
-                &Tensor::of_slice(&[0.5, 0.5, 0.5]),
-            )
+            // println!("jittered {:?}", jittered);
+            // let tensor: Tensor = TchTensorAsImage::from_cv(&jittered).into_inner();
+            let tensor = image_to_tensor(&jittered);
+            // println!("tensor {}", tensor.totype(Kind::Float));
+            println!("tensor 2 {:?}", image_to_tensor(input));
+            println!(
+                "tensor 3 {:?}",
+                TchTensorAsImage::from_cv(input).into_inner()
+            );
+            // normalize(
+            //     &tensor,
+            //     &Tensor::of_slice(&[0.5, 0.5, 0.5]),
+            //     &Tensor::of_slice(&[0.5, 0.5, 0.5]),
+            // )
+            tensor.totype(Kind::Float)
         };
 
-        println!("DIMENSIONS {:?}", img.dimensions());
+        // println!("DIMENSIONS {:?}", img.dimensions());
 
-        let mut img = img.to_image();
+        let img = img.to_image();
 
         // convert vertices to 2,2
 
         // println!("{:?}", vertices);
 
-        println!("{:?}", vertices);
+        // println!("{:?}", vertices);
         let vertices = vertices.into_shape((10, 8)).to_owned().unwrap();
 
         let (score_map, geo_map, ignored_map) =
-            get_score_geo(&mut img, &vertices, &labels, self.scale, self.length.into());
+            get_score_geo(&img, &vertices, &labels, self.scale, self.length.into());
 
         Some((transform(&img), score_map, geo_map, ignored_map))
     }

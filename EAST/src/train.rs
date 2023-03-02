@@ -41,10 +41,13 @@ pub fn train(
                 gt_geo.to_device(Device::cuda_if_available()),
                 ignored_map.to_device(Device::cuda_if_available()),
             );
+            println!("cast to device complete");
             let start_time = std::time::Instant::now();
             let tensor_parts = model.forward(&img).split(2, 1);
             let pred_score = &tensor_parts[0];
             let pred_geo = &tensor_parts[1];
+
+            println!("pred_score is {:?}, pred_geo is {:?}", pred_score, pred_geo);
 
             // &Tensor to Tensor
             let pred_score = pred_score.to_kind(tch::Kind::Float);

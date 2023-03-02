@@ -38,7 +38,8 @@ where
     let kernel_size = 3;
 
     let conv_config = ConvConfig {
-        padding: (kernel_size - 1) / 2,
+        // padding: (kernel_size - 1) / 2,
+        padding: 1,
         ws_init: tch::nn::Init::Kaiming {
             dist: NormalOrUniform::Normal,
             fan: FanInOut::FanOut,
@@ -81,6 +82,8 @@ where
         }
         in_channels = v as i64;
     }
+
+    println!("layers {:?}", layers.len());
 
     layers
 }
@@ -143,6 +146,7 @@ impl Module for VGG {
 
         x = self.avgpool.forward(&x);
         x = x.view_(&[x.size1().expect("failed to get size of tensor"), -1]);
+        println!("VGG {:?}",x);
         x = self.classifier.forward(&x);
 
         x
@@ -262,9 +266,11 @@ impl Merge {
 
 impl Module for Merge {
     fn forward(&self, xs: &Tensor) -> Tensor {
+        println!("starting merge module");
         let mut y = Tensor::upsample_bilinear2d(&xs.get(3), &[], true, Some(2.0), Some(2.0));
 
         y = Tensor::cat(&[y, xs.get(2)], 1);
+
 
         y = self
             .relu1
@@ -351,6 +357,7 @@ impl Output {
 
 impl Module for Output {
     fn forward(&self, xs: &Tensor) -> Tensor {
+        println!("starting output module");
         let score = self.sigmoid1.forward(&self.conv1.forward(&xs));
         let loc = self.sigmoid2.forward(&self.conv2.forward(&xs)) * self.scope;
         let angle = self.sigmoid3.forward(&(&self.conv3.forward(xs) - 0.5)) * PI;
@@ -381,16 +388,20 @@ impl Extractor {
 
 impl Module for Extractor {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let mut x = Tensor::new();
+        println!("starting extractor module");
+        let mut x: Tensor = Tensor::copy(xs);
         let mut out = vec![];
 
 
         let features = self.features.get_layers();
 
+        println!("features: {:?}", features.len());
+
         for feature in features {
-            x = feature.forward(&xs);
+            x = feature.forward(&x);
+            println!("x {:?}",&x);
             if xs.size()[2] <= 32 {
-                out.push(x);
+                out.push(Tensor::copy(&x));
             }
         }
         // convert out to tensor
